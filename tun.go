@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"sync"
 	"unsafe"
 )
 
@@ -39,8 +40,9 @@ type Packet struct {
 }
 
 type Interface struct {
-	name string
-	file     *os.File
+	name  string
+	file  *os.File
+	mutex *sync.RWMutex
 }
 
 // Disconnect from the tun/tap interface.
@@ -48,6 +50,8 @@ type Interface struct {
 // If the interface isn't configured to be persistent, it is
 // immediately destroyed by the kernel.
 func (t *Interface) Close() error {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
 	return t.file.Close()
 }
 
@@ -61,6 +65,8 @@ func (t *Interface) Name() string {
 func (t *Interface) ReadPacket() (*Packet, error) {
 	buf := make([]byte, 10000)
 
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
 	n, err := t.file.Read(buf)
 	if err != nil {
 		return nil, err
@@ -81,6 +87,8 @@ func (t *Interface) WritePacket(pkt *Packet) error {
 	buf := make([]byte, len(pkt.Packet)+4)
 	binary.BigEndian.PutUint16(buf[2:4], uint16(pkt.Protocol))
 	copy(buf[4:], pkt.Packet)
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
 	n, err := t.file.Write(buf)
 	if err != nil {
 		return err
@@ -116,5 +124,5 @@ func Open(ifPattern string, kind DevKind) (*Interface, error) {
 		return nil, err
 	}
 
-	return &Interface{ifName, file}, nil
+	return &Interface{ifName, file, &sync.RWMutex{}}, nil
 }
